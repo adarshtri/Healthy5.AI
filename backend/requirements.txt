@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+motor
+groq
+python-dotenv
+pydantic
+langgraph
+langchain
+langchain-groq
+langchain-ollama
