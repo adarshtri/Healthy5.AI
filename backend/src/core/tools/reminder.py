@@ -10,6 +10,9 @@ def get_user_id(config: RunnableConfig) -> int:
         raise ValueError("User ID not found in context.")
     return int(user_id)
 
+def get_bot_token(config: RunnableConfig) -> str | None:
+    return config.get("configurable", {}).get("bot_token")
+
 @tool
 async def create_reminder(
     title: str,
@@ -61,10 +64,13 @@ async def create_reminder(
             else:
                 return f"Error: Could not find a user profile with the name '{target_name}'. Ensure they have interacted with the bot and set their profile name before trying to schedule reminders for them."
 
+        bot_token = get_bot_token(config)
+
         reminder = ReminderConfig(
             user_id=user_id,
             title=title,
             action_type=action_type,
+            bot_token=bot_token,
             target_user_id=target_user_id,
             recurrence_type=recurrence_type,
             time_of_day=time_of_day,

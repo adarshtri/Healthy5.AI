@@ -1,15 +1,14 @@
 import asyncio
-from datetime import datetime, timedelta
-from .database import get_db, get_chat_history
-from .models import ReminderInstance, ChatMessage
-from .agents.graph import general_agent
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import datetime, timedelta
+from src.core.database import get_db, get_chat_history
+from src.core.models import ReminderInstance, ChatMessage
 from bson import ObjectId
+
+# For EDA, we don't import Bot here. We push to queues.
+from src.events.broker import get_outgoing_queue, get_incoming_queue
+from src.events.schemas import DeliverMessage, ReceivedMessage
+
 
 async def generate_upcoming_instances():
     """Generates ReminderInstances for the next 24 hours based on active configs."""
@@ -55,6 +54,7 @@ async def generate_upcoming_instances():
                                     user_id=config["user_id"],
                                     title=config["title"],
                                     action_type=config.get("action_type", "message"),
+                                    bot_token=config.get("bot_token"),
                                     target_user_id=config.get("target_user_id"),
                                     scheduled_time=target_time
                                 )
@@ -89,6 +89,7 @@ async def generate_upcoming_instances():
                                     user_id=config["user_id"],
                                     title=config["title"],
                                     action_type=config.get("action_type", "message"),
+                                    bot_token=config.get("bot_token"),
                                     target_user_id=config.get("target_user_id"),
                                     scheduled_time=next_time
                                 )
@@ -98,23 +99,27 @@ async def generate_upcoming_instances():
         except Exception as e:
             print(f"Error in generate_upcoming_instances: {e}")
             
-        await asyncio.sleep(60)  # Run every minute to catch newly created configs
+        await asyncio.sleep(60)  # Run every minute
+
 
 async def poll_and_notify():
-    """Polls for due reminders and sends Telegram messages."""
+    """Polls for due reminders and publishes events to queues."""
+    out_queue = get_outgoing_queue()
+    in_queue = get_incoming_queue()
+    
     while True:
         try:
             db = await get_db()
             now = datetime.utcnow()
             
-            # Find all pending instances that are due (scheduled_time <= now)
+            # Find all pending instances that are due
             due_instances = db.reminder_instances.find({
                 "status": "pending",
                 "scheduled_time": {"$lte": now}
             })
              
             async for instance in due_instances:
-                # Provide a 2 hours window. Or else it's expired
+                # Provide a 2 hours window
                 two_hours_ago = now - timedelta(hours=2)
                 if instance["scheduled_time"] < two_hours_ago:
                     await db.reminder_instances.update_one(
@@ -126,94 +131,61 @@ async def poll_and_notify():
                 try:
                     chat_target_id = instance.get("target_user_id") or instance["user_id"]
                     
-                    if instance.get("action_type") == "agent":
-                        # --- Agentic Execution ---
-                        try:
-                            # Fetch history so agent has context. Use target history if applicable.
-                            history_models = await get_chat_history(chat_target_id, limit=10)
-                            history_messages = []
-                            for m in history_models:
-                                if m.sender == "user":
-                                    history_messages.append(HumanMessage(content=m.text))
-                                elif m.sender == "bot" and m.text and m.text.strip():
-                                    history_messages.append(AIMessage(content=m.text))
-                                    
-                            agenda = f"You are running as a background cron job. It is time for the user's scheduled task: '{instance['title']}'. Review their profile and history, then generate a personalized message fulfilling this task to send directly to them right now."
-                            sys_msg = SystemMessage(content=agenda)
-                            
-                            input_messages = history_messages + [sys_msg]
-                            
-                            # We use general_agent to avoid tool restrictions of weight/profile subgraphs
-                            result = general_agent({"messages": input_messages})
-                            bot_response_text = result["messages"][0].content
-                            
-                            # Fetch token from targeted user's profile
-                            target_profile = await db.profiles.find_one({"user_id": chat_target_id})
-                            bot_token = target_profile.get("bot_token") if target_profile else None
-                            bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-                            
-                            async with Bot(token=bot_token) as dyn_bot:
-                                msg = await dyn_bot.send_message(
-                                    chat_id=chat_target_id,
-                                    text=f"🤖 **Auto-Agent:**\n{bot_response_text}"
-                                )
-                            
-                            # Log the bot's autonomous message to history
-                            bot_hist_msg = ChatMessage(
-                                user_id=chat_target_id, 
-                                sender="bot", 
-                                text=bot_response_text,
-                                context="agent_reminder"
-                            )
-                            await db.chat_history.insert_one(bot_hist_msg.model_dump())
-                        except Exception as ai_e:
-                            print(f"Failed to execute agentic reminder: {ai_e}")
-                            continue
-                    else:
-                        # --- Standard Static Message ---
-                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                            [
-                                InlineKeyboardButton(text="✅ Done", callback_data=f"rem:done:{str(instance['_id'])}"),
-                                InlineKeyboardButton(text="⏭️ Skip", callback_data=f"rem:skip:{str(instance['_id'])}")
-                            ]
-                        ])
-                        
-                        # Fetch token from targeted user's profile
+                    # Direct token from the instance > target_profile > default fallback
+                    bot_token = instance.get("bot_token")
+                    if not bot_token:
                         target_profile = await db.profiles.find_one({"user_id": chat_target_id})
-                        bot_token = target_profile.get("bot_token") if target_profile else None
-                        bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
+                        bot_token = target_profile.get("bot_token", "default")
+                    
+                    if instance.get("action_type") == "agent":
+                        # Push an event to the INCOMING queue to wake up an AI Agent worker
+                        # We spoof a "system trigger" message for the LLM
+                        sys_trigger = f"[System Trigger: Execute Scheduled Task] '{instance['title']}'"
                         
-                        async with Bot(token=bot_token) as dyn_bot:
-                            msg = await dyn_bot.send_message(
-                                chat_id=chat_target_id,
-                                text=f"⏰ **Reminder:** {instance['title']}",
-                                reply_markup=keyboard
-                            )
+                        agent_event = ReceivedMessage(
+                            source_platform="cron",
+                            source_id=chat_target_id,
+                            bot_token_or_id=bot_token,
+                            text_content=sys_trigger
+                        )
+                        in_queue.enqueue("src.workers.agent_worker.process_incoming", agent_event.model_dump())
+                    else:
+                        # Push directly to OUTGOING queue
+                        # Note: Aiogram inline keyboards would be serialized in 'raw_payload' in a full implementation,
+                        # for now we send plain text as a proof of concept of the decoupled flow.
+                        out_event = DeliverMessage(
+                            target_platform="telegram",
+                            target_id=chat_target_id,
+                            bot_token_or_id=bot_token,
+                            text_content=f"⏰ **Reminder:** {instance['title']}\n\n(Reply 'done' or 'skip')"
+                        )
+                        out_queue.enqueue("src.workers.egress_worker.process_outgoing", out_event.model_dump())
                         
                     # Update status to notified
                     await db.reminder_instances.update_one(
                         {"_id": instance["_id"]},
-                        {"$set": {"status": "notified", "telegram_message_id": msg.message_id}}
+                        {"$set": {"status": "processing_async"}} # Changed from 'notified'
                     )
                 except Exception as e:
-                    print(f"Failed to send reminder to {chat_target_id}: {e}")
+                    print(f"Failed to queue reminder for {chat_target_id}: {e}")
                     
         except Exception as e:
             print(f"Error in poll_and_notify: {e}")
             
-        await asyncio.sleep(60)  # Run every minute
+        await asyncio.sleep(60)
+
 
 async def check_timeouts():
-    """Marks 'notified' items as 'expired' if untouched for > 2 hours."""
+    """Cleanup old instances."""
     while True:
         try:
             db = await get_db()
             now = datetime.utcnow()
             two_hours_ago = now - timedelta(hours=2)
             
-            # Find all notified instances that are > 2 hours old
+            # Find all processing instances that are > 2 hours old
             expired_instances = db.reminder_instances.find({
-                "status": "notified",
+                "status": "processing_async",
                 "scheduled_time": {"$lte": two_hours_ago}
             })
             
@@ -222,33 +194,11 @@ async def check_timeouts():
                      {"_id": instance["_id"]},
                      {"$set": {"status": "expired"}}
                  )
-                 
-                 try:
-                     # Remove the buttons from the telegram message
-                     if instance.get("telegram_message_id"):
-                          # We need a bot to edit messages. Let's find the correct token.
-                          target_user_id = instance.get("target_user_id") or instance["user_id"]
-                          target_profile = await db.profiles.find_one({"user_id": target_user_id})
-                          bot_token = target_profile.get("bot_token") if target_profile else None
-                          bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-
-                          async with Bot(token=bot_token) as dyn_bot:
-                              await dyn_bot.edit_message_reply_markup(
-                                  chat_id=target_user_id,
-                                  message_id=instance["telegram_message_id"],
-                                  reply_markup=None
-                              )
-                              await dyn_bot.send_message(
-                                  chat_id=target_user_id,
-                                  text=f"⚠️ You missed your reminder: {instance['title']}"
-                              )
-                 except Exception as e:
-                      pass
-                      
         except Exception as e:
             print(f"Error in check_timeouts: {e}")
             
-        await asyncio.sleep(60 * 5)  # Run every 5 minutes
+        await asyncio.sleep(60 * 5)
+
 
 def start_scheduler():
     """Starts the background asyncio tasks."""

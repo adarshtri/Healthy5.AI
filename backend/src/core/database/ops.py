@@ -2,12 +2,15 @@ from .connection import get_db
 from ..models import ChatMessage
 from typing import List
 
-async def get_chat_history(user_id: int, limit: int = 10) -> List[ChatMessage]:
+async def get_chat_history(source_platform: str, source_id: str | int, limit: int = 10, skip: int = 0) -> List[ChatMessage]:
     """
     Retrieves the last `limit` chat messages for a user, sorted by time ascending.
     """
     db = await get_db()
-    cursor = db.chat_history.find({"user_id": user_id}).sort("timestamp", -1).limit(limit)
+    cursor = db.chat_history.find({
+        "source_platform": source_platform, 
+        "source_id": source_id
+    }).sort("timestamp", -1).skip(skip).limit(limit)
     
     messages = []
     async for doc in cursor:
@@ -15,6 +18,20 @@ async def get_chat_history(user_id: int, limit: int = 10) -> List[ChatMessage]:
     
     # Reverse to return chronological order
     return messages[::-1]
+
+async def save_chat_message(source_platform: str, source_id: str | int, sender: str, text: str):
+    """
+    Saves a message into the chat_history collection for agent context.
+    """
+    db = await get_db()
+    message = ChatMessage(
+        source_platform=source_platform,
+        source_id=source_id,
+        sender=sender,
+        text=text
+    )
+    await db.chat_history.insert_one(message.model_dump())
+
 
 async def get_user_state(user_id: int) -> str:
     """

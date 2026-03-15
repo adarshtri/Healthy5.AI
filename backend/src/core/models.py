@@ -3,7 +3,8 @@ from datetime import datetime
 from typing import Optional, Literal
 
 class ChatMessage(BaseModel):
-    user_id: int
+    source_platform: Literal["telegram", "whatsapp", "web"]
+    source_id: str | int
     sender: Literal["user", "bot"]
     text: str
     context: Optional[str] = None
@@ -59,6 +60,7 @@ class ReminderConfig(BaseModel):
     user_id: int
     title: str
     action_type: Literal["message", "agent"] = "message"
+    bot_token: Optional[str] = None
     target_user_id: Optional[int] = None
     recurrence_type: Literal["daily", "interval"] = "daily"
     time_of_day: Optional[str] = None  # Format: "HH:MM" for daily
@@ -73,8 +75,37 @@ class ReminderInstance(BaseModel):
     user_id: int
     title: str
     action_type: Literal["message", "agent"] = "message"
+    bot_token: Optional[str] = None
     target_user_id: Optional[int] = None
     scheduled_time: datetime
     status: Literal["pending", "notified", "completed", "skipped", "expired"] = "pending"
     telegram_message_id: Optional[int] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class Integration(BaseModel):
+    platform: Literal["telegram", "whatsapp", "web"]
+    token: str # e.g., Telegram Bot Token
+    name: str # e.g., "My Fitness Bot"
+    model_source: Literal["local", "cloud"] = "cloud"
+    allowed_agents: list[str] = Field(default_factory=lambda: ["general"])
+
+class SystemUser(BaseModel):
+    username: str
+    password_hash: str
+    role: Literal["admin", "user"] = "user"
+    profile_name: Optional[str] = None
+    integrations: list[Integration] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class SystemSettings(BaseModel):
+    telegram_webhook_url: Optional[str] = None
+    journal_base_path: str = "data/journal"
+    model_source: Literal["cloud", "local"] = "cloud"
+    groq_api_key: Optional[str] = None
+    groq_model: str = "llama-3.3-70b-versatile"
+    ollama_model: str = "llama3"
+    redis_url: str = "redis://localhost:6379/0"
+    secret_key: str = "default-secret-key-please-change-in-production"
+    algorithm: str = "HS256"
+    telegram_bot_token: Optional[str] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
