@@ -47,7 +47,8 @@ export default function DashboardPage() {
         { id: "general", name: "General Assistant", description: "General chat, routing, and answering health questions." },
         { id: "weight", name: "Weight Tracker", description: "Log, update, and track your body weight over time." },
         { id: "profile", name: "Profile Manager", description: "Background data entry for saving user preferences and facts." },
-        { id: "remind", name: "Reminder Bot", description: "Create, manage, and delete recurring reminders or tasks." }
+        { id: "remind", name: "Reminder Bot", description: "Create, manage, and delete recurring reminders or tasks." },
+        { id: "mind", name: "Mind Buddy", description: "A gentle mental health companion for journaling, mood tracking, and emotional support." }
     ];
 
     const toggleAgent = (agentId: string) => {

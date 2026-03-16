@@ -64,6 +64,8 @@ class ContextManager:
                     if intg.get("token") == event.bot_token_or_id:
                         allowed_agents = intg.get("allowed_agents", ["general"])
                         break
+        
+        print(f"[ContextManager] User {event.source_id} allowed_agents from DB: {allowed_agents}")
 
         # 5. Append the newest incoming message directly to the state
         formatted_messages.append(HumanMessage(content=event.text_content))

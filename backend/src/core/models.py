@@ -34,7 +34,7 @@ class UserProfile(BaseModel):
     bot_token: Optional[str] = None
     memories: list[str] = Field(default_factory=list)
     preferences: list[str] = Field(default_factory=list)
-    active_agent: Literal["weight", "profile", "general", "remind"] = "general"
+    active_agent: Literal["weight", "profile", "general", "remind", "mind"] = "general"
     
     class Config:
         json_schema_extra = {
@@ -52,7 +52,7 @@ class UserProfile(BaseModel):
 class UserState(BaseModel):
     """Historical log of context switches"""
     user_id: int
-    active_agent: Literal["weight", "profile", "general", "remind"]
+    active_agent: Literal["weight", "profile", "general", "remind", "mind"]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 class ReminderConfig(BaseModel):

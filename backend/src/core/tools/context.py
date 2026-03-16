@@ -16,7 +16,8 @@ async def list_agents(config: RunnableConfig) -> str:
         "general": "General chat, routing, and answering questions",
         "weight": "Log, update, and track body weight",
         "profile": "Background data entry for saving user preferences and facts",
-        "remind": "Create, manage, and delete recurring reminders or tasks"
+        "remind": "Create, manage, and delete recurring reminders or tasks",
+        "mind": "A gentle mental health companion for journaling, mood tracking, and emotional support"
     }
     
     response = "Available Agents:\n"
@@ -28,7 +29,7 @@ async def list_agents(config: RunnableConfig) -> str:
 
 @tool
 async def set_active_agent(
-    agent_name: Annotated[str, "The name of the agent to switch to: 'general', 'weight', 'profile', or 'remind'"],
+    agent_name: Annotated[str, "The name of the agent to switch to: 'general', 'weight', 'profile', 'remind', or 'mind'"],
     config: RunnableConfig
 ) -> str:
     """

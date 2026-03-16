@@ -86,8 +86,8 @@ def build_agent_graph(spec_name: str) -> 'CompiledStateGraph':
         # Format the system prompt dynamically based on the Agent Spec requirements
         sys_prompt_text = spec.system_prompt
         
-        if "current_date" in sys_prompt_text:
-             sys_prompt_text = sys_prompt_text.format(current_date=datetime.now().strftime("%Y-%m-%d"))
+        if "{current_date}" in sys_prompt_text:
+             sys_prompt_text = sys_prompt_text.replace("{current_date}", datetime.now().strftime("%Y-%m-%d"))
         
         if spec.use_profile_context:
             user_id = config.get("configurable", {}).get("user_id")
